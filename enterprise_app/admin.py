@@ -5,4 +5,3 @@ admin.site.register(Enterprise)
 admin.site.register(Region)
 admin.site.register(Circle)
 admin.site.register(Cluster)
-

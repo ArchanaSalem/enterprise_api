@@ -81,6 +81,10 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+REST_FRAMEWORK = {
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 5  # number of items per page
+}
 
 
 # Password validation
@@ -123,3 +127,14 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+# Email configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_USE_TLS = True                # fixed
+EMAIL_PORT = 587
+EMAIL_HOST_USER = 'archuproglint021@gmail.com'   #  Gmail
+EMAIL_HOST_PASSWORD = 'xbqnblyolytsdxlb'         # 16-char pass
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER

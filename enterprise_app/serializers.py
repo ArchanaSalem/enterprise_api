@@ -1,143 +1,231 @@
 from rest_framework import serializers
-from .models import Enterprise, Region, Circle, Cluster, Store
+from .models import Enterprise, Region, Circle, Cluster, Store,Role,User
+from django.contrib.auth.hashers import make_password
+from rest_framework.validators import UniqueValidator
+import re  
+    # re nah eegular expression 
 
-# ------------------- Enterprise Serializer -------------------
 class EnterpriseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Enterprise
-        fields = ['id', 'name', 'is_active']
-        read_only_fields = ['id']
+        fields = ['id', 'name', 'is_active', 'created_on', 'updated_on']
 
     def validate_name(self, value):
-        if Enterprise.objects.filter(name__iexact=value).exists():
+        qs = Enterprise.objects.filter(name__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
             raise serializers.ValidationError("Enterprise with this name already exists.")
         return value
 
 
-# ------------------- Region Serializer -------------------
 class RegionSerializer(serializers.ModelSerializer):
-    enterprise_id = serializers.PrimaryKeyRelatedField(
-        queryset=Enterprise.objects.all(),
-        source='enterprise',
-        write_only=True
-    )
+    enterprise_id = serializers.IntegerField(write_only=True, required=True)
+    enterprise_name = serializers.CharField(source='enterprise.name', read_only=True)
 
     class Meta:
         model = Region
-        fields = ['id', 'name', 'enterprise_id', 'is_active']
-        read_only_fields = ['id']
+        fields = ['id', 'name', 'enterprise_id', 'enterprise_name', 'is_active', 'created_on', 'updated_on']
 
-    def validate(self, attrs):
-        enterprise = attrs['enterprise']
-        name = attrs['name']
-        if Region.objects.filter(name__iexact=name, enterprise=enterprise).exists():
-            raise serializers.ValidationError("Region with this name already exists for this enterprise.")
-        return attrs
+    def validate(self, data):
+        enterprise_id = data.get('enterprise_id') if 'enterprise_id' in data else (self.instance.enterprise_id if self.instance else None)
+        name = data.get('name', self.instance.name if self.instance else None)
+        if not enterprise_id:
+            raise serializers.ValidationError({"enterprise_id": "enterprise_id is required."})
+        # check enterprise exists and active
+        try:
+            ent = Enterprise.objects.get(pk=enterprise_id)
+        except Enterprise.DoesNotExist:
+            raise serializers.ValidationError({"enterprise_id": "Enterprise does not exist."})
+
+        qs = Region.objects.filter(enterprise_id=enterprise_id, name__iexact=name)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"name": "Region with this name already exists for this enterprise."})
+        return data
 
 
-# ------------------- Circle Serializer -------------------
 class CircleSerializer(serializers.ModelSerializer):
-    enterprise_id = serializers.PrimaryKeyRelatedField(
-        queryset=Enterprise.objects.all(),
-        source='enterprise',
-        write_only=True
-    )
-    region_id = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.all(),
-        source='region',
-        write_only=True
-    )
+    enterprise_id = serializers.IntegerField(write_only=True, required=True)
+    region_id = serializers.IntegerField(write_only=True, required=True)
+    enterprise_name = serializers.CharField(source='enterprise.name', read_only=True)
+    region_name = serializers.CharField(source='region.name', read_only=True)
 
     class Meta:
         model = Circle
-        fields = ['id', 'name', 'enterprise_id', 'region_id', 'is_active']
-        read_only_fields = ['id']
+        fields = ['id', 'name', 'enterprise_id', 'region_id', 'enterprise_name', 'region_name',
+                  'is_active', 'created_on', 'updated_on']
 
-    def validate(self, attrs):
-        enterprise = attrs['enterprise']
-        region = attrs['region']
-        name = attrs['name']
-        if Circle.objects.filter(name__iexact=name, enterprise=enterprise, region=region).exists():
-            raise serializers.ValidationError("Circle with this name already exists in this region for this enterprise.")
-        return attrs
+    def validate(self, data):
+        enterprise_id = data.get('enterprise_id') if 'enterprise_id' in data else (self.instance.enterprise_id if self.instance else None)
+        region_id = data.get('region_id') if 'region_id' in data else (self.instance.region_id if self.instance else None)
+        name = data.get('name', self.instance.name if self.instance else None)
+
+        if not enterprise_id or not region_id:
+            raise serializers.ValidationError({"detail": "enterprise_id and region_id are required."})
+
+        # validate parents exist
+        try:
+            Enterprise.objects.get(pk=enterprise_id)
+        except Enterprise.DoesNotExist:
+            raise serializers.ValidationError({"enterprise_id": "Enterprise does not exist."})
+        try:
+            Region.objects.get(pk=region_id, enterprise_id=enterprise_id)
+        except Region.DoesNotExist:
+            raise serializers.ValidationError({"region_id": "Region does not exist under given enterprise."})
+
+        qs = Circle.objects.filter(enterprise_id=enterprise_id, region_id=region_id, name__iexact=name)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"name": "Circle with this name already exists in this enterprise+region."})
+
+        return data
 
 
-# ------------------- Cluster Serializer -------------------
 class ClusterSerializer(serializers.ModelSerializer):
-    enterprise_id = serializers.PrimaryKeyRelatedField(
-        queryset=Enterprise.objects.all(),
-        source='enterprise',
-        write_only=True
-    )
-    region_id = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.all(),
-        source='region',
-        write_only=True
-    )
-    circle_id = serializers.PrimaryKeyRelatedField(
-        queryset=Circle.objects.all(),
-        source='circle',
-        write_only=True
-    )
+    enterprise_id = serializers.IntegerField(write_only=True, required=True)
+    region_id = serializers.IntegerField(write_only=True, required=True)
+    circle_id = serializers.IntegerField(write_only=True, required=True)
+    enterprise_name = serializers.CharField(source='enterprise.name', read_only=True)
+    region_name = serializers.CharField(source='region.name', read_only=True)
+    circle_name = serializers.CharField(source='circle.name', read_only=True)
 
     class Meta:
         model = Cluster
-        fields = ['id', 'name', 'enterprise_id', 'region_id', 'circle_id', 'is_active']
-        read_only_fields = ['id']
+        fields = ['id', 'name', 'enterprise_id', 'region_id', 'circle_id',
+                  'enterprise_name', 'region_name', 'circle_name',
+                  'is_active', 'created_on', 'updated_on']
 
-    def validate(self, attrs):
-        enterprise = attrs['enterprise']
-        region = attrs['region']
-        circle = attrs['circle']
-        name = attrs['name']
-        if Cluster.objects.filter(name__iexact=name, enterprise=enterprise, region=region, circle=circle).exists():
-            raise serializers.ValidationError("Cluster with this name already exists in this circle for this enterprise.")
-        return attrs
+    def validate(self, data):
+        enterprise_id = data.get('enterprise_id') if 'enterprise_id' in data else (self.instance.enterprise_id if self.instance else None)
+        region_id = data.get('region_id') if 'region_id' in data else (self.instance.region_id if self.instance else None)
+        circle_id = data.get('circle_id') if 'circle_id' in data else (self.instance.circle_id if self.instance else None)
+        name = data.get('name', self.instance.name if self.instance else None)
+
+        if not (enterprise_id and region_id and circle_id):
+            raise serializers.ValidationError({"detail": "enterprise_id, region_id and circle_id are required."})
+
+        # validate parents
+        try:
+            Enterprise.objects.get(pk=enterprise_id)
+        except Enterprise.DoesNotExist:
+            raise serializers.ValidationError({"enterprise_id": "Enterprise does not exist."})
+        try:
+            Region.objects.get(pk=region_id, enterprise_id=enterprise_id)
+        except Region.DoesNotExist:
+            raise serializers.ValidationError({"region_id": "Region does not exist under given enterprise."})
+        try:
+            Circle.objects.get(pk=circle_id, enterprise_id=enterprise_id, region_id=region_id)
+        except Circle.DoesNotExist:
+            raise serializers.ValidationError({"circle_id": "Circle does not exist under given enterprise+region."})
+
+        qs = Cluster.objects.filter(enterprise_id=enterprise_id, region_id=region_id, circle_id=circle_id, name__iexact=name)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"name": "Cluster with this name already exists in this enterprise+region+circle."})
+        return data
 
 
-# ------------------- Store Serializer -------------------
 class StoreSerializer(serializers.ModelSerializer):
-    enterprise_id = serializers.PrimaryKeyRelatedField(
-        queryset=Enterprise.objects.all(),
-        source='enterprise',
-        write_only=True
-    )
-    region_id = serializers.PrimaryKeyRelatedField(
-        queryset=Region.objects.all(),
-        source='region',
-        write_only=True
-    )
-    circle_id = serializers.PrimaryKeyRelatedField(
-        queryset=Circle.objects.all(),
-        source='circle',
-        write_only=True
-    )
-    cluster_id = serializers.PrimaryKeyRelatedField(
-        queryset=Cluster.objects.all(),
-        source='cluster',
-        write_only=True
-    )
+    enterprise_id = serializers.IntegerField(write_only=True, required=True)
+    region_id = serializers.IntegerField(write_only=True, required=True)
+    circle_id = serializers.IntegerField(write_only=True, required=True)
+    cluster_id = serializers.IntegerField(write_only=True, required=True)
+
+    enterprise_name = serializers.CharField(source='enterprise.name', read_only=True)
+    region_name = serializers.CharField(source='region.name', read_only=True)
+    circle_name = serializers.CharField(source='circle.name', read_only=True)
+    cluster_name = serializers.CharField(source='cluster.name', read_only=True)
 
     class Meta:
         model = Store
         fields = [
-            'id', 'name', 'enterprise_id', 'region_id', 'circle_id', 'cluster_id',
-            'is_active', 'location', 'industry', 'updated_on', 'deleted_on'
+            'id', 'name',
+            'enterprise_id', 'region_id', 'circle_id', 'cluster_id',
+            'enterprise_name', 'region_name', 'circle_name', 'cluster_name',
+            'industry', 'location',
+            'is_active', 'created_on', 'updated_on'
         ]
-        read_only_fields = ['id', 'updated_on', 'deleted_on']
 
-    def validate(self, attrs):
-        enterprise = attrs['enterprise']
-        region = attrs['region']
-        circle = attrs['circle']
-        cluster = attrs['cluster']
-        name = attrs['name']
-        if Store.objects.filter(
-            name__iexact=name,
-            enterprise=enterprise,
-            region=region,
-            circle=circle,
-            cluster=cluster
-        ).exists():
-            raise serializers.ValidationError("Store with this name already exists in this cluster for this enterprise.")
-        return attrs
+    def validate(self, data):
+        enterprise_id = data.get('enterprise_id') if 'enterprise_id' in data else (self.instance.enterprise_id if self.instance else None)
+        region_id = data.get('region_id') if 'region_id' in data else (self.instance.region_id if self.instance else None)
+        circle_id = data.get('circle_id') if 'circle_id' in data else (self.instance.circle_id if self.instance else None)
+        cluster_id = data.get('cluster_id') if 'cluster_id' in data else (self.instance.cluster_id if self.instance else None)
+        name = data.get('name', self.instance.name if self.instance else None)
+
+        if not (enterprise_id and region_id and circle_id and cluster_id):
+            raise serializers.ValidationError({"detail": "enterprise_id, region_id, circle_id and cluster_id are required."})
+
+        # validate parent chain
+        try:
+            Enterprise.objects.get(pk=enterprise_id)
+        except Enterprise.DoesNotExist:
+            raise serializers.ValidationError({"enterprise_id": "Enterprise does not exist."})
+        try:
+            Region.objects.get(pk=region_id, enterprise_id=enterprise_id)
+        except Region.DoesNotExist:
+            raise serializers.ValidationError({"region_id": "Region does not exist under given enterprise."})
+        try:
+            Circle.objects.get(pk=circle_id, enterprise_id=enterprise_id, region_id=region_id)
+        except Circle.DoesNotExist:
+            raise serializers.ValidationError({"circle_id": "Circle does not exist under given enterprise+region."})
+        try:
+            Cluster.objects.get(pk=cluster_id, enterprise_id=enterprise_id, region_id=region_id, circle_id=circle_id)
+        except Cluster.DoesNotExist:
+            raise serializers.ValidationError({"cluster_id": "Cluster does not exist under given enterprise+region+circle."})
+
+        qs = Store.objects.filter(
+            enterprise_id=enterprise_id, region_id=region_id,
+            circle_id=circle_id, cluster_id=cluster_id, name__iexact=name
+        )
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"name": "Store with this name already exists in this enterprise+region+circle+cluster"})
+#-------Role Serialiser
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description','is_active', 'created_on', 'updated_on']
+        read_only_fields = ['id','is_active', 'created_on', 'updated_on']
+
+#.............User Serialiser=========
+
+class UserSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(
+        required=True,
+        validators=[UniqueValidator(queryset=User.objects.all())]
+    )
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'address', 'experience', 'email', 'password', 'role', 'store']
+
+    def validate_password(self, value):
+        import re
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters long.")
+        if not re.search(r'[A-Z]', value):
+            raise serializers.ValidationError("Password must contain at least one uppercase letter.")
+        if not re.search(r'[a-z]', value):
+            raise serializers.ValidationError("Password must contain at least one lowercase letter.")
+        if not re.search(r'[0-9]', value):
+            raise serializers.ValidationError("Password must contain at least one number.")
+        if not re.search(r'[@$!%*?&]', value):
+            raise serializers.ValidationError("Password must contain at least one special character (@$!%*?&).")
+        return value
+
+    def create(self, validated_data):
+# Remove plain password and replace with hashed password
+        password = validated_data.pop('password', None)
+        if password:
+            validated_data['password'] = make_password(password)
+    
+# Create the user with hashed password
+        user = User.objects.create(**validated_data)
+        return user
