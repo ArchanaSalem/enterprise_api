@@ -1,13 +1,19 @@
+from django.contrib.auth.hashers import make_password,check_password
+from django.contrib.auth import authenticate
+import re
+from django.db import transaction
+from django.core.mail import send_mail
+from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework import status
 from django.http import JsonResponse
-from .models import Enterprise, Region, Circle, Cluster, Store,Role,User
-from .utils import send_test_email
+from .models import Enterprise, Region, Circle, Cluster, Store,Role,User,PasswordHistory
+from .utils import send_test_email,encrypt_email
 from .serializers import (
     EnterpriseSerializer, RegionSerializer, CircleSerializer,
-    ClusterSerializer, StoreSerializer,RoleSerializer,UserSerializer)
+    ClusterSerializer, StoreSerializer,RoleSerializer)
 
 # #########
 # Cascading function
@@ -420,72 +426,238 @@ def role_update(request):
         return Response({"message": "Role updated", "data": serializer.data}, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-#--------------Create User---------
+#--------------Create User------
 
+# Password validation----
+def validate_password(password):
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must have at least one uppercase letter"
+    if not re.search(r"[a-z]", password):
+        return False, "Password must have at least one lowercase letter"
+    if not re.search(r"\d", password):
+        return False, "Password must have at least one number"
+    if not re.search(r"[!@#$%^&*()_+]", password):
+        return False, "Password must have at least one special character"
+    return True, ""
+
+# ------------------ CREATE USER ------------------
 @api_view(['POST'])
-def user_create(request):
-    serializer = UserSerializer(data=request.data)
-    if serializer.is_valid():
-        # Save user and get the created user instance
-        user = serializer.save()
-
-        # Trigger email after user creation
-        subject = "Welcome to Our Platform"
-        message = f"Hello {user.first_name},\n\nYour account has been created successfully!"
-        send_test_email(user.email, subject, message)  # TO email from user input
-
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-#..............Update User--------
-
-@api_view(['POST'])
-def user_update(request):
+def create_user(request):
     try:
-        user = User.objects.get(id=request.data.get("id"), is_active=True)
-    except User.DoesNotExist:
-        return Response({"error": "Active user not found"}, status=status.HTTP_404_NOT_FOUND)
+        data = request.data
+        email = data.get('email')
+        password = data.get('password')
+        first_name = data.get('first_name')
+        last_name = data.get('last_name')
+        address = data.get('address', '')
+        experience = data.get('experience', 0)
+        role_id = data.get('role')
+        store_id = data.get('store')
+        is_active = data.get('is_active', True)  # can be set in create JSON
 
-    serializer = UserSerializer(user, data=request.data, partial=True)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not all([email, password, first_name, last_name, role_id, store_id]):
+            return Response({"message": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email=email).exists():
+            return Response({"message": "Email already exists"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate password
+        valid, msg = validate_password(password)
+        if not valid:
+            return Response({"message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get role and store
+        try:
+            role = Role.objects.get(id=role_id)
+            store = Store.objects.get(id=store_id)
+        except Role.DoesNotExist:
+            return Response({"message": "Role not found"}, status=status.HTTP_400_BAD_REQUEST)
+        except Store.DoesNotExist:
+            return Response({"message": "Store not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.create(
+            email=email,
+            password=make_password(password),
+            first_name=first_name,
+            last_name=last_name,
+            address=address,
+            experience=experience,
+            role=role,
+            store=store,
+            is_active=is_active
+        )
+
+        # Send email
+        subject = "Account Created"
+        message = f"Hello {first_name},\n\nYour account has been created successfully.\n\nEmail: {email}\nPassword: {password}"
+        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email])
+
+        return Response({"message": "User created successfully", "user_id": user.id}, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-#,,,,,,,UserStoreRole ku views==========
+# ------------------ UPDATE USER ------------------
 @api_view(['POST'])
-def assign_user_role_store(request):
-    serializer = UserStoreRoleSerializer(data=request.data)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-#'''''''''Removing Userstorerole''''''
-
-@api_view(['POST'])
-def remove_user_role_store(request):
+def update_user(request):
     try:
-        obj = UserStoreRole.objects.get(id=request.data.get('id'))
-        obj.is_active = False
-        obj.save()
-        return Response({"message": "Assignment deactivated"}, status=status.HTTP_200_OK)
-    except UserStoreRole.DoesNotExist:
-        return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        data = request.data
+        email = data.get('email')
+        if not email:
+            return Response({"message": "Email required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Optional fields update
+        if 'password' in data:
+            valid, msg = validate_password(data['password'])
+            if not valid:
+                return Response({"message": msg}, status=status.HTTP_400_BAD_REQUEST)
+            user.password = make_password(data['password'])
+        if 'first_name' in data:
+            user.first_name = data['first_name']
+        if 'last_name' in data:
+            user.last_name = data['last_name']
+        if 'address' in data:
+            user.address = data['address']
+        if 'experience' in data:
+            user.experience = data['experience']
+        if 'role' in data:
+            try:
+                user.role = Role.objects.get(id=data['role'])
+            except Role.DoesNotExist:
+                return Response({"message": "Role not found"}, status=status.HTTP_400_BAD_REQUEST)
+        if 'store' in data:
+            try:
+                user.store = Store.objects.get(id=data['store'])
+            except Store.DoesNotExist:
+                return Response({"message": "Store not found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.save()
+        return Response({"message": "User updated successfully"}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# Send test Email
+# ------------------ SOFT DELETE USER ------------------
+@api_view(['POST'])
+def delete_user(request):
+    try:
+        email = request.data.get('email')
+        if not email:
+            return Response({"message": "Email required"}, status=status.HTTP_400_BAD_REQUEST)
 
-def send_email_view(request):
-    to_email = 'recipient@example.com'
-    subject = 'Test Email from Django'
-    message = 'Hello! This is a test email from Archana Ramesh to your Django app'
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "User not found or already inactive"}, status=status.HTTP_404_NOT_FOUND)
 
-    send_test_email(to_email, subject, message)
+        user.is_active = False
+        user.save()
+        return Response({"message": "User deactivated successfully"}, status=status.HTTP_200_OK)
 
-    return JsonResponse({'status': 'Email sent successfully'})
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# ------------------ LOGIN USER ------------------
+@api_view(['POST'])
+def login_user(request):
+    try:
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if not email or not password:
+            return Response({"message": "Email and password required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if check_password(password, user.password):
+            return Response({"message": "Login successful"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"message": "Login is not successful"}, status=status.HTTP_400_BAD_REQUEST)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ------------------ PASSWORD CHANGE  ------------------
+@api_view(['POST'])
+def change_password(request):
+    """
+    JSON input:
+    {
+      "email": "user@example.com",
+      "old_password": "OldPass@123",
+      "new_password": "NewPass@123"
+    }
+    """
+    try:
+        data = request.data
+        email = data.get('email')
+        old_password = data.get('old_password')
+        new_password = data.get('new_password')
+
+        if not all([email, old_password, new_password]):
+            return Response({"message": "email, old_password and new_password are required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Find active user
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Verify old password matches current stored password
+        if not check_password(old_password, user.password):
+            return Response({"message": "Old password is incorrect"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate new password strength
+        valid, msg = validate_password(new_password)
+        if not valid:
+            return Response({"message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        # New must not be same as current
+        if check_password(new_password, user.password):
+            return Response({"message": "New password must not match current password"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check against recent 3 password history
+        recent_history = PasswordHistory.objects.filter(user=user).order_by('-created_on')[:3]
+        for hist in recent_history:
+            if check_password(new_password, hist.password_hash):
+                return Response({"message": "New password must not match any of last 3 passwords"},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        # update inside a transaction
+        with transaction.atomic():
+            # Hash new password and save to User
+            hashed_new = make_password(new_password)
+            user.password = hashed_new
+            user.save()
+
+            # Create history record for new password
+            PasswordHistory.objects.create(user=user, password_hash=hashed_new)
+
+            # Keep only latest 3 entries: delete older if more than 3
+            all_history = PasswordHistory.objects.filter(user=user).order_by('-created_on')
+            if all_history.count() > 3:
+                # get id to delete (oldest ones)
+                to_delete = all_history[3:]  # slice: entries after top 3 (older ones)
+                # delete 
+                ids = [p.id for p in to_delete]
+                PasswordHistory.objects.filter(id__in=ids).delete()
+
+        return Response({"message": "Password updated successfully"}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

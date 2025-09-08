@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Enterprise, Region, Circle, Cluster, Store,Role,User
+from .models import Enterprise, Region, Circle, Cluster, Store,Role
 from django.contrib.auth.hashers import make_password
 from rest_framework.validators import UniqueValidator
 import re  
@@ -193,39 +193,4 @@ class RoleSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description','is_active', 'created_on', 'updated_on']
         read_only_fields = ['id','is_active', 'created_on', 'updated_on']
 
-#.............User Serialiser=========
 
-class UserSerializer(serializers.ModelSerializer):
-    email = serializers.EmailField(
-        required=True,
-        validators=[UniqueValidator(queryset=User.objects.all())]
-    )
-    password = serializers.CharField(write_only=True)
-
-    class Meta:
-        model = User
-        fields = ['id', 'first_name', 'last_name', 'address', 'experience', 'email', 'password', 'role', 'store']
-
-    def validate_password(self, value):
-        import re
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters long.")
-        if not re.search(r'[A-Z]', value):
-            raise serializers.ValidationError("Password must contain at least one uppercase letter.")
-        if not re.search(r'[a-z]', value):
-            raise serializers.ValidationError("Password must contain at least one lowercase letter.")
-        if not re.search(r'[0-9]', value):
-            raise serializers.ValidationError("Password must contain at least one number.")
-        if not re.search(r'[@$!%*?&]', value):
-            raise serializers.ValidationError("Password must contain at least one special character (@$!%*?&).")
-        return value
-
-    def create(self, validated_data):
-# Remove plain password and replace with hashed password
-        password = validated_data.pop('password', None)
-        if password:
-            validated_data['password'] = make_password(password)
-    
-# Create the user with hashed password
-        user = User.objects.create(**validated_data)
-        return user

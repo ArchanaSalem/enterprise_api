@@ -109,5 +109,18 @@ class User(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.role} @ {self.store}"
+        
+        #Password history
 
+# ... existing Role, Store, User models ...
 
+class PasswordHistory(models.Model):
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='password_history')
+    password_hash = models.CharField(max_length=255)   # store hashed password text
+    created_on = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_on']
+
+    def __str__(self):
+        return f"PasswordHistory(user={self.user.email}, created_on={self.created_on})"

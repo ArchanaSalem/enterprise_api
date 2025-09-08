@@ -6,5 +6,6 @@ urlpatterns = [
 
     # Include all enterprise_app URLs
     path('api/', include('enterprise_app.urls')),  # <--- important
-]
 
+]
+    

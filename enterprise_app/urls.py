@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views import user_create
+from .views import create_user, update_user, delete_user, login_user,change_password
 
 urlpatterns = [
     # Enterprise
@@ -47,15 +47,10 @@ urlpatterns = [
 
 
     # USER
-    path('users/create', views.user_create),
-    path('users/update', views.user_update),
 
-
-    path('users/create/', user_create), 
+    path('create-user', create_user),
+    path('update-user', update_user),
+    path('delete-user', delete_user),
+    path('login-user', login_user),
+    path('change-password', change_password)
 ]
-    
-
-
-
-
-
