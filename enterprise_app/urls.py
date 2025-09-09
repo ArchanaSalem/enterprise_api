@@ -52,5 +52,10 @@ urlpatterns = [
     path('update-user', update_user),
     path('delete-user', delete_user),
     path('login-user', login_user),
-    path('change-password', change_password)
+    path('change-password', change_password),
+
+    path("generate-otp", views.generate_and_send_otp),
+
+    path("verify-otp", views.verify_otp),
+    path("reset-password", views.reset_password),
 ]

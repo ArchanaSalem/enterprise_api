@@ -106,6 +106,10 @@ class User(models.Model):
     is_active = models.BooleanField(default=True)
     created_on = models.DateTimeField(auto_now_add=True)
     updated_on = models.DateTimeField(auto_now=True)
+    otp = models.CharField(max_length=6, null=True, blank=True)
+    otp_verification = models.BooleanField(null=True, blank=True)
+
+
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.role} @ {self.store}"

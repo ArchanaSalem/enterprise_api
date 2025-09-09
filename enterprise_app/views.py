@@ -1,6 +1,8 @@
 from django.contrib.auth.hashers import make_password,check_password
 from django.contrib.auth import authenticate
 import re
+import random
+from rest_framework.response import Response
 from django.db import transaction
 from django.core.mail import send_mail
 from django.conf import settings
@@ -643,7 +645,7 @@ def change_password(request):
             # Hash new password and save to User
             hashed_new = make_password(new_password)
             user.password = hashed_new
-            user.save()
+            user.save() 
 
             # Create history record for new password
             PasswordHistory.objects.create(user=user, password_hash=hashed_new)
@@ -652,7 +654,7 @@ def change_password(request):
             all_history = PasswordHistory.objects.filter(user=user).order_by('-created_on')
             if all_history.count() > 3:
                 # get id to delete (oldest ones)
-                to_delete = all_history[3:]  # slice: entries after top 3 (older ones)
+                to_delete = all_history[3:]  # entries after top 3 (older ones)
                 # delete 
                 ids = [p.id for p in to_delete]
                 PasswordHistory.objects.filter(id__in=ids).delete()
@@ -661,3 +663,158 @@ def change_password(request):
 
     except Exception as e:
         return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+#.......otp field user table la add panna we will have a api...&&&&&&&&&&&
+
+@api_view(['POST'])
+def generate_and_send_otp(request):
+    """
+    JSON input:
+    {
+      "email": "user@example.com"
+    }
+    """
+    email = request.data.get("email")
+
+    if not email:
+        return Response({"message": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(email=email) 
+    except User.DoesNotExist:
+        return Response({"message": "Email not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Auto-generate 6-digit la otp
+    otp = str(random.randint(100000, 999999))
+
+    #  Save OTP in DB and reset verification
+    user.otp = otp
+    user.is_verified = None
+    user.save()
+
+    #  Sending  email using EMAIL_HOST_USER from settings.py adhuve anpikkum
+    subject = "Password Reset OTP"
+    message = f"Hello {user.first_name or 'User'},\n\nYour password reset OTP is: {otp}\n\nPlease use this to reset your password."
+    from_email = settings.EMAIL_HOST_USER  # automatically from settings.py
+    recipient_list = [email]
+
+    try:
+        send_mail(subject, message, from_email, recipient_list)
+    except Exception as e:
+        return Response({"message": f"OTP generated but email failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    #Respond success
+    return Response({
+        "message": f"OTP sent successfully to {email}"
+    }, status=status.HTTP_200_OK)
+
+
+     # Otp verify aiduchaa nu we will check in postman and is verified true ah mathradhukku
+
+
+@api_view(['POST'])
+def verify_otp(request):
+    """
+    JSON Input:
+    {
+      "email": "archana@example.com", ipdi if I give
+      "otp": "123456"
+    }
+    """
+    try:
+        data = request.data
+        email = data.get("email")
+        otp_input = data.get("otp")
+
+        if not email or not otp_input:
+            return Response({"message": "Email and OTP are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if user exists db la irukanga nah
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if OTP matches with the , indha ! is used 
+        if user.otp != otp_input:
+            return Response({"message": "Invalid OTP"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # OTP match aana  set is_verified = True
+        user.is_verified = True
+        user.save()
+
+        return Response({"message": "OTP verified successfully", "is_verified": user.is_verified}, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            #  now pasword reset panra flow so that new pass old one ah replace pannum
+
+       # Password strength
+def validate_password(password):
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must have at least one uppercase letter"
+    if not re.search(r"[a-z]", password):
+        return False, "Password must have at least one lowercase letter"
+    if not re.search(r"\d", password):
+        return False, "Password must have at least one number"
+    if not re.search(r"[!@#$%^&*()_+]", password):
+        return False, "Password must have at least one special character"
+    return True, ""
+
+
+@api_view(['POST'])
+def reset_password(request):
+    """
+
+    JSON input:
+    {
+      "email": "user@example.com",
+      "new_password": "NewPass@123"
+    }
+
+    """
+    try:
+        data = request.data
+        email = data.get("email")
+        new_password = data.get("new_password")
+
+        if not email or not new_password:
+            return Response({"message": "Email and new_password are required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # check user exists
+        try:
+            user = User.objects.get(email=email, is_active=True)
+        except User.DoesNotExist:
+            return Response({"message": "Email does not exist"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # validate new password strength
+        valid, msg = validate_password(new_password)
+        if not valid:
+            return Response({"message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        # transaction ensures atomic update
+        with transaction.atomic():
+            hashed_new = make_password(new_password)
+
+            #  update user password with pudhu pass
+            user.password = hashed_new
+            user.otp = None
+            user.is_verified = None
+            user.save()
+
+            # clear old password history fullaah vanish panidum password history alone 1 user dhan
+            PasswordHistory.objects.filter(user=user).delete()
+
+            # insert new password history idhu will restart history ah
+            PasswordHistory.objects.create(user=user, password_hash=hashed_new)
+
+        return Response({"message": "Password reset successfully"},
+                        status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
